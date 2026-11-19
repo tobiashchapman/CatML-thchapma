@@ -2,7 +2,7 @@
 open Parser
 }
 
-let white = [' ' '\t']+
+let white = [' ' '\t' '\r' '\n']+
 let digit = ['0'-'9']
 let int = '-'? digit+
 let letter = ['a'-'z' 'A'-'Z']
@@ -13,10 +13,20 @@ rule read =
   | white { read lexbuf }
   | "True" { TRUE }
   | "False" { FALSE }
+  | "And" { AND }
+  | "Or" { OR }
+  | "Not" { NOT }
+  | "First" { FIRST }
+  | "Second" { SECOND }
+  | "Fun" { FUN }
+  | "Fix" { FIX }
   | "*" { TIMES }
   | "+" { PLUS }
   | "(" { LPAREN }
   | ")" { RPAREN }
+  | "," { COMMA }
+  | "->" { ARROW }
+  | "." { DOT }
   | "Let" { LET }
   | "=" { EQUALS }
   | "In" { IN }
