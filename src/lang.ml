@@ -13,7 +13,10 @@ type expr =
      (* Variables and let expressions *)
      | Var of var | Let of var * expr * expr
 
-     (* TODO: Add pairs; functions; and recursive functions *)
+     (* TODO: Add pairs; functions; and recursive functions COMPLETED *)
+     | Pair of expr * expr | First of expr | Second of expr
+     | Fun of var * expr | Rec of var * var * expr | App of expr * expr
+     
 
 
 (*
@@ -21,9 +24,12 @@ type expr =
   in : AST [[e]]
   out : true iff e is a value
 *)
-let is_val e = match e with 
+let rec is_val e = match e with 
      Int _ -> true
    | Bool _ -> true
+   | Pair (e1, e2) -> is_val e1 && is_val e2
+   | Fun _ -> true
+   | Rec _ -> true
    | _ -> false
 
 (*************************)
@@ -43,6 +49,12 @@ let rec subst (x, v, e) : expr =
   | Mult(e1,e2) -> Mult(subst(x,v,e1), subst(x,v,e2))
   | Equal(e1,e2) -> Equal(subst(x,v,e1), subst(x,v,e2))
   | If(e0,e1,e2) -> If(subst(x,v,e0), subst(x,v,e1), subst(x,v,e2))
+  | Pair(e1,e2) -> Pair(subst(x,v,e1), subst(x,v,e2))
+  | First(e') -> First(subst(x,v,e'))
+  | Second(e') -> Second(subst(x,v,e'))
+  | Fun(y,body) -> Fun(y, if x = y then body else subst(x,v,body))
+  | Rec(f,y,body) -> Rec(f, y, if x = f || x = y then body else subst(x,v,body))
+  | App(e1,e2) -> App(subst(x,v,e1), subst(x,v,e2))
 
 type step_result = Step of expr | NotReducible
 (* 
@@ -53,7 +65,7 @@ type step_result = Step of expr | NotReducible
 *)
 let rec step (e : expr) : step_result = 
    match e with
-   | Bool _ | Int _ -> NotReducible
+   | Bool _ | Int _ | Fun _ | Rec _ -> NotReducible
    | Not (Bool b) -> Step (Bool (not b))
    | Not e1 ->
       begin match step e1 with
@@ -123,6 +135,39 @@ let rec step (e : expr) : step_result =
       | Step e1' -> Step (Let(x,e1',e2))
       | NotReducible -> if is_val e1 then Step(subst(x,e1,e2)) else NotReducible
       end
+   | Pair(e1, e2) ->
+      begin match step e1 with
+       | Step e1' -> Step (Pair (e1', e2))
+       | NotReducible ->
+          begin match step e2 with
+           | Step e2' -> Step (Pair (e1, e2'))
+           | NotReducible -> NotReducible
+          end
+      end
+   | First(Pair(e1, e2)) when is_val e1 && is_val e2 -> Step e1
+   | First(e') ->
+      begin match step e' with
+       | Step e'' -> Step (First e'')
+       | NotReducible -> NotReducible
+      end
+   | Second(Pair(e1, e2)) when is_val e1 && is_val e2 -> Step e2
+   | Second(e') ->
+      begin match step e' with
+       | Step e'' -> Step (Second e'')
+       | NotReducible -> NotReducible
+      end
+   | App(Fun(x, body), e2) when is_val e2 -> Step (subst(x, e2, body))
+   | App(Rec(f, x, body), e2) when is_val e2 ->
+      Step (subst(x, e2, subst(f, Rec(f, x, body), body)))
+   | App(e1, e2) ->
+      begin match step e1 with
+       | Step e1' -> Step (App(e1', e2))
+       | NotReducible ->
+          begin match step e2 with
+           | Step e2' -> Step (App(e1, e2'))
+           | NotReducible -> NotReducible
+          end
+      end
 
 
 (*
@@ -142,8 +187,9 @@ let rec multistep e = match step e with
 (* Type checking *)
 (*****************)
 
-type arith_type = INT | BOOL
-(* TODO: add pairs and function types *)
+(* TODO: add pairs and function types COMPLETED*)
+type arith_type = INT | BOOL | PairT of arith_type * arith_type | FunT of arith_type * arith_type
+
 
 (* Define a type to represent finite maps/typing contexts *)
 type context = (var * arith_type) list
@@ -152,12 +198,12 @@ type context = (var * arith_type) list
 let empty_context : context = []
 
 (* lookup : context * var -> arith_type option
- * input :
- *    g - a typing context
- *    x - a variable
- * output :
- *    if (x,tau) is in g, return Some tau
- *    otherwise, return None
+- input :
+-    g - a typing context
+-    x - a variable
+- output :
+-    if (x,tau) is in g, return Some tau
+-    otherwise, return None
  *)
 let rec lookup (g,x) : arith_type option =
   match g with
@@ -165,12 +211,12 @@ let rec lookup (g,x) : arith_type option =
   | (y,tp)::g' -> if x = y then Some tp else lookup(g',x)
 
 (* extend : context * var * arith_type -> context
- * input:
- *    g - a typing context
- *    x - a variable
- *    tp - an arith_type
- * output:
- *    A typing context that maps x to tp and any other y to g(y)
+- input:
+-    g - a typing context
+-    x - a variable
+-    tp - an arith_type
+- output:
+-    A typing context that maps x to tp and any other y to g(y)
  *)
 let extend (g,x,tp) : context = (x,tp)::g
 
@@ -211,6 +257,44 @@ let rec type_of_expr (g, e) : arith_type option =
       else None
     | _, _, _ -> None
     end
+  | Pair(e1,e2) ->
+    begin match type_of_expr (g,e1), type_of_expr (g,e2) with
+    | Some t1, Some t2 -> Some (PairT(t1, t2))
+    | _, _ -> None
+    end
+  | First(e') ->
+    begin match type_of_expr (g,e') with
+    | Some (PairT(t1, _)) -> Some t1
+    | _ -> None
+    end
+  | Second(e') ->
+    begin match type_of_expr (g,e') with
+    | Some (PairT(_, t2)) -> Some t2
+    | _ -> None
+    end
+  | Fun(x, body) ->
+    begin match lookup(g, x) with
+    | Some tx ->
+      begin match type_of_expr(extend(g, x, tx), body) with
+      | Some tbody -> Some (FunT(tx, tbody))
+      | None -> None
+      end
+    | None -> None
+    end
+  | Rec(f, x, body) ->
+    begin match lookup(g, f), lookup(g, x) with
+    | Some (FunT(tx, tbody) as tf), Some tx' when tx = tx' ->
+      begin match type_of_expr(extend(extend(g, f, tf), x, tx), body) with
+      | Some tbody' when tbody = tbody' -> Some tf
+      | _ -> None
+      end
+    | _ -> None
+    end
+  | App(e1, e2) ->
+    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
+    | Some (FunT(t_arg, t_res)), Some t2 when t_arg = t2 -> Some t_res
+    | _ -> None
+    end
 
 
 
@@ -226,7 +310,7 @@ let rec type_of_expr (g, e) : arith_type option =
   out : The concrete expression e in string format.
 *)
 let rec string_of_expr e = match e with
-  (* TODO: extend string_of_expr *)
+  (* TODO: extend string_of_expr COMPLETED*)
    | Var x -> x
    | Let(x,e1,e2) -> "Let " ^ x ^ " = " ^ string_of_expr e1 ^ " In " ^ string_of_expr e2
    | Bool true -> "True"
@@ -241,6 +325,12 @@ let rec string_of_expr e = match e with
    | If(e1, e2, e3) -> "If " ^ (string_of_expr e1) ^ 
                        " Then " ^ (string_of_expr e2) ^
                        " Else " ^ (string_of_expr e3)
+   | Pair(e1, e2) -> "(" ^ (string_of_expr e1) ^ ", " ^ (string_of_expr e2) ^ ")"
+   | First e1 -> "(First " ^ (string_of_expr e1) ^ ")"
+   | Second e1 -> "(Second " ^ (string_of_expr e1) ^ ")"
+   | Fun(x, body) -> "(Fun " ^ x ^ " -> " ^ (string_of_expr body) ^ ")"
+   | Rec(f, x, body) -> "(Rec " ^ f ^ " (" ^ x ^ ") -> " ^ (string_of_expr body) ^ ")"
+   | App(e1, e2) -> "(" ^ (string_of_expr e1) ^ " " ^ (string_of_expr e2) ^ ")"
 
 
 (*
@@ -272,4 +362,3 @@ let rec stepper e = pretty_trace e true;;
   side effects : Pretty prints execution trace of e. 
 *)
 let rec tracer e = pretty_trace e false;;
-
