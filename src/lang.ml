@@ -15,7 +15,7 @@ type expr =
 
      (* TODO: Add pairs; functions; and recursive functions COMPLETED *)
      | Pair of expr * expr | First of expr | Second of expr
-     | Fun of var * expr | Rec of var * var * expr | App of expr * expr
+     | Fun of var * expr | Fix of var * var * expr | App of expr * expr
      
 
 
@@ -29,7 +29,7 @@ let rec is_val e = match e with
    | Bool _ -> true
    | Pair (e1, e2) -> is_val e1 && is_val e2
    | Fun _ -> true
-   | Rec _ -> true
+   | Fix _ -> true
    | _ -> false
 
 (*************************)
@@ -53,7 +53,7 @@ let rec subst (x, v, e) : expr =
   | First(e') -> First(subst(x,v,e'))
   | Second(e') -> Second(subst(x,v,e'))
   | Fun(y,body) -> Fun(y, if x = y then body else subst(x,v,body))
-  | Rec(f,y,body) -> Rec(f, y, if x = f || x = y then body else subst(x,v,body))
+  | Fix(f,y,body) -> Fix(f, y, if x = f || x = y then body else subst(x,v,body))
   | App(e1,e2) -> App(subst(x,v,e1), subst(x,v,e2))
 
 type step_result = Step of expr | NotReducible
@@ -65,7 +65,7 @@ type step_result = Step of expr | NotReducible
 *)
 let rec step (e : expr) : step_result = 
    match e with
-   | Bool _ | Int _ | Fun _ | Rec _ -> NotReducible
+   | Bool _ | Int _ | Fun _ | Fix _ -> NotReducible
    | Not (Bool b) -> Step (Bool (not b))
    | Not e1 ->
       begin match step e1 with
@@ -110,7 +110,7 @@ let rec step (e : expr) : step_result =
            begin match step e2 with
            | Step e2' -> Step (Mult (e1, e2'))
            | NotReducible -> NotReducible
-           end
+          end
        end
    | Equal (Int n1, Int n2) -> Step (Bool (n1 = n2))
    | Equal (e1, e2) ->
@@ -157,8 +157,8 @@ let rec step (e : expr) : step_result =
        | NotReducible -> NotReducible
       end
    | App(Fun(x, body), e2) when is_val e2 -> Step (subst(x, e2, body))
-   | App(Rec(f, x, body), e2) when is_val e2 ->
-      Step (subst(x, e2, subst(f, Rec(f, x, body), body)))
+   | App(Fix(f, x, body), e2) when is_val e2 ->
+      Step (subst(x, e2, subst(f, Fix(f, x, body), body)))
    | App(e1, e2) ->
       begin match step e1 with
        | Step e1' -> Step (App(e1', e2))
@@ -281,7 +281,7 @@ let rec type_of_expr (g, e) : arith_type option =
       end
     | None -> None
     end
-  | Rec(f, x, body) ->
+  | Fix(f, x, body) ->
     begin match lookup(g, f), lookup(g, x) with
     | Some (FunT(tx, tbody) as tf), Some tx' when tx = tx' ->
       begin match type_of_expr(extend(extend(g, f, tf), x, tx), body) with
@@ -291,74 +291,11 @@ let rec type_of_expr (g, e) : arith_type option =
     | _ -> None
     end
   | App(e1, e2) ->
-    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
-    | Some (FunT(t_arg, t_res)), Some t2 when t_arg = t2 -> Some t_res
-    | _ -> None
-    end
-
-
-
-(********************************************)
-(* Utility functions for working with ARITH *)
-(********************************************)
-
-
-
-(*
-  string_of_expr : expr -> string
-  in : An expression AST [[e]].
-  out : The concrete expression e in string format.
-*)
-let rec string_of_expr e = match e with
-  (* TODO: extend string_of_expr COMPLETED*)
-   | Var x -> x
-   | Let(x,e1,e2) -> "Let " ^ x ^ " = " ^ string_of_expr e1 ^ " In " ^ string_of_expr e2
-   | Bool true -> "True"
-   | Bool false -> "False"
-   | Int n -> string_of_int n
-   | And (e1, e2) -> "(" ^ (string_of_expr e1) ^ " And " ^ (string_of_expr e2) ^ ")"
-   | Or (e1, e2) -> "(" ^ (string_of_expr e1) ^ " Or " ^ (string_of_expr e2) ^ ")"
-   | Not e1 -> "(Not " ^ (string_of_expr e1) ^ ")"
-   | Plus (e1, e2) -> "(" ^ (string_of_expr e1) ^ " + " ^ (string_of_expr e2) ^ ")"
-   | Mult (e1, e2) -> "(" ^ (string_of_expr e1) ^ " x " ^ (string_of_expr e2) ^ ")"
-   | Equal (e1, e2) -> "(" ^ (string_of_expr e1) ^ " = " ^ (string_of_expr e2) ^ ")"
-   | If(e1, e2, e3) -> "If " ^ (string_of_expr e1) ^ 
-                       " Then " ^ (string_of_expr e2) ^
-                       " Else " ^ (string_of_expr e3)
-   | Pair(e1, e2) -> "(" ^ (string_of_expr e1) ^ ", " ^ (string_of_expr e2) ^ ")"
-   | First e1 -> "(First " ^ (string_of_expr e1) ^ ")"
-   | Second e1 -> "(Second " ^ (string_of_expr e1) ^ ")"
-   | Fun(x, body) -> "(Fun " ^ x ^ " -> " ^ (string_of_expr body) ^ ")"
-   | Rec(f, x, body) -> "(Rec " ^ f ^ " (" ^ x ^ ") -> " ^ (string_of_expr body) ^ ")"
-   | App(e1, e2) -> "(" ^ (string_of_expr e1) ^ " " ^ (string_of_expr e2) ^ ")"
-
-
-(*
-  pretty_trace : expr -> bool -> unit
-  in : AST [[e]], stepper flag 
-  out : ()
-  side effects : Pretty prints execution trace of e. Blocks on keystroke 
-  between reductions if stepper is on.
-*)
-let rec pretty_trace e stepper =
-   Printf.printf "%s" (string_of_expr e); if stepper then ignore (read_line()) else ();
-   if (is_val e) then (Printf.printf "\n"; flush stdout) else
-    match step e with
-    | NotReducible -> Printf.printf "  (Bad, Stuck Expression)\n"; flush stdout
-    | Step e' -> Printf.printf "->\n"; flush stdout; pretty_trace e' stepper
-
-(*
-  stepper : expr -> ()
-  in : AST [[e]]
-  out : ()
-  side effects : Pretty prints execution trace of e. Blocks on keystroke 
-  between reductions.
-*)
-let rec stepper e = pretty_trace e true;;
-(*
-  tracer : expr -> ()
-  in : AST [[e]]
-  out : ()
-  side effects : Pretty prints execution trace of e. 
-*)
-let rec tracer e = pretty_trace e false;;
+    begin match type_of_expr(g, e2) with
+    | Some t_arg ->
+      begin match e1 with
+      | Fun(x, body) ->
+        begin match type_of_expr(extend(g, x, t_arg), body) with
+        | Some t_res -> Some t_res
+        | None -> None
+        end
