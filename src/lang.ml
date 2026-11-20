@@ -296,6 +296,10 @@ let rec type_of_expr (g, e) : arith_type option =
       begin match e1 with
       | Fun(x, body) ->
         begin match type_of_expr(extend(g, x, t_arg), body) with
-        | Some t_res -> Some t_res
+        | Some t_res -> Some (FunT(t_arg, t_res))
         | None -> None
         end
+      | _ -> None
+      end
+    | None -> None
+    end
