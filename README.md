@@ -1,6 +1,6 @@
 # Assignment 8, CS3250
 
-TODO: Update this README and fill out the reflection questions.
+TODO: Update this README and fill out the reflection questions. COMPLETED
 
 This repository contains a (template) implementation of CatML, an ML variant used at UVM for CS3250.
 
@@ -71,27 +71,39 @@ The files in the `src` directory include:
 
 ## How to interact with a CatML program
 
-TODO
+1. the first step is to build the project from the repo root and then launch it using build utop which looks like this:
+
+dune build
+dune utop
+
+2. Once you are inside utop, open CatML and Main:
+
+open CatML;;
+open Main;;
+
+3. You can then parse strings or run .catml files using run_catML_file (here is an example of a factorial function that should print 120):
+
+run_catML_file "tests/fact.catml";;
 
 
 # Reflection Questions
 
 1. If you worked with a team, list all the members of the team and briefly state what contributions each person made.
 
-TODO
+I worked alone on this assignment.
 
 2. Did you use generative AI to assist you in implementing this project? If so, briefly explain how you used it and for which components.
 
-TODO
+Yes I used Gemini to help me understand how to setup dune properly as I was having problems with dune not building and I ended up having to reinstall ocaml and run dune/ocaml on linux instead of windows. AI was also used to help me figure out how ocamllex and menhir tokens connect to main.ml (Lexer.read and Parser.prog), catch Failure and Parser.Error cleanly in run_catML_file, and format clear error messages and documentation.
 
 3. Did you make any design decisions that we should know about?
 
-TODO
+Due to the absence of explicit type annotations in Fun and Fix within the AST, attempting to look up bound parameters or recursive function names directly in empty_context would result in failures during the type-checking of closed expressions. I modified the type_of_expr function in src/lang.ml to employ fresh type variables and unification (infer/unify) prior to converting back to arith_type. This adjustment allows Fun, Fix, and App, as well as recursive functions like factorial, to type-check from empty_context. Additionally, I kept the parse function in src/main.ml and introduced run_catML_file with string_of_val formatter.
 
 4. Did you implement any of the extra credit features? Briefly summarize your work.
 
-TODO
+No
 
 5. Any feedback on the structure of this assignment?
 
-TODO
+I would much prefer to have smaller weekly homeworks. If being in a group is an option, then I think that people should either be put into premade groups or not have them at all. 
