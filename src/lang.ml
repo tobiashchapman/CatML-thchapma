@@ -291,15 +291,7 @@ let rec type_of_expr (g, e) : arith_type option =
     | _ -> None
     end
   | App(e1, e2) ->
-    begin match type_of_expr(g, e2) with
-    | Some t_arg ->
-      begin match e1 with
-      | Fun(x, body) ->
-        begin match type_of_expr(extend(g, x, t_arg), body) with
-        | Some t_res -> Some (FunT(t_arg, t_res))
-        | None -> None
-        end
-      | _ -> None
-      end
-    | None -> None
+    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
+    | Some (FunT(t_param, t_res)), Some t_arg when t_arg = t_param -> Some t_res
+    | _ -> None
     end
