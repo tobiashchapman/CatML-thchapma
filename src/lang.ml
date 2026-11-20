@@ -220,78 +220,247 @@ let rec lookup (g,x) : arith_type option =
  *)
 let extend (g,x,tp) : context = (x,tp)::g
 
-let rec type_of_expr (g, e) : arith_type option =
-  match e with
-  | Var x -> lookup(g,x)
-  | Let(x,e1,e2) ->
-    begin match type_of_expr (g,e1) with
-    | None -> None
-    | Some tp -> type_of_expr (extend(g,x,tp), e2)
-    end
-  | Bool _ -> Some BOOL
-  | And(e1,e2) | Or(e1,e2) -> 
-    begin match type_of_expr(g,e1), type_of_expr (g,e2) with
-     | Some BOOL, Some BOOL -> Some BOOL
-     | _, _ -> None
-    end
-  | Not(e') ->
-    begin match type_of_expr (g,e') with
-    | Some BOOL -> Some BOOL
-    | _ -> None
-    end
-  | Int _ -> Some INT
-  | Plus(e1,e2) | Mult(e1,e2) -> 
-    begin match type_of_expr (g,e1), type_of_expr (g,e2) with
-     | Some INT, Some INT -> Some INT
-     | _, _ -> None
-    end
-  | Equal(e1,e2) ->
-    begin match type_of_expr (g,e1), type_of_expr (g,e2) with
-     | Some INT, Some INT -> Some BOOL
-     | _, _ -> None
-    end
-  | If(e0,e1,e2) ->
-    begin match type_of_expr (g,e0), type_of_expr (g,e1), type_of_expr (g,e2) with
-    | Some BOOL, Some t1, Some t2 ->
-      if t1 = t2 then Some t1
-      else None
-    | _, _, _ -> None
-    end
-  | Pair(e1,e2) ->
-    begin match type_of_expr (g,e1), type_of_expr (g,e2) with
-    | Some t1, Some t2 -> Some (PairT(t1, t2))
-    | _, _ -> None
-    end
-  | First(e') ->
-    begin match type_of_expr (g,e') with
-    | Some (PairT(t1, _)) -> Some t1
-    | _ -> None
-    end
-  | Second(e') ->
-    begin match type_of_expr (g,e') with
-    | Some (PairT(_, t2)) -> Some t2
-    | _ -> None
-    end
-  | Fun(x, body) ->
-    begin match lookup(g, x) with
-    | Some tx ->
-      begin match type_of_expr(extend(g, x, tx), body) with
-      | Some tbody -> Some (FunT(tx, tbody))
-      | None -> None
+type ty_var = int
+
+type full_type =
+  | TInt
+  | TBool
+  | TPair of full_type * full_type
+  | TFun of full_type * full_type
+  | TVar of ty_var
+
+let fresh_var =
+  let counter = ref 0 in
+  fun () ->
+    incr counter;
+    TVar !counter
+
+let rec apply_subst (sub : (ty_var * full_type) list) (t : full_type) : full_type =
+  match t with
+  | TInt | TBool -> t
+  | TPair (t1, t2) -> TPair (apply_subst sub t1, apply_subst sub t2)
+  | TFun (t1, t2) -> TFun (apply_subst sub t1, apply_subst sub t2)
+  | TVar v ->
+      begin match List.assoc_opt v sub with
+      | None -> TVar v
+      | Some t' -> apply_subst sub t'
       end
-    | None -> None
-    end
-  | Fix(f, x, body) ->
-    begin match lookup(g, f), lookup(g, x) with
-    | Some (FunT(tx, tbody) as tf), Some tx' when tx = tx' ->
-      begin match type_of_expr(extend(extend(g, f, tf), x, tx), body) with
-      | Some tbody' when tbody = tbody' -> Some tf
+
+let rec occurs (v : ty_var) (t : full_type) : bool =
+  match t with
+  | TInt | TBool -> false
+  | TPair (t1, t2) | TFun (t1, t2) -> occurs v t1 || occurs v t2
+  | TVar u -> u = v
+
+let rec unify (sub : (ty_var * full_type) list) (t1 : full_type) (t2 : full_type)
+    : (ty_var * full_type) list option =
+  let t1 = apply_subst sub t1 in
+  let t2 = apply_subst sub t2 in
+  match (t1, t2) with
+  | TInt, TInt | TBool, TBool -> Some sub
+  | TPair (a1, b1), TPair (a2, b2) | TFun (a1, b1), TFun (a2, b2) ->
+      begin match unify sub a1 a2 with
+      | None -> None
+      | Some sub' -> unify sub' b1 b2
+      end
+  | TVar v, t | t, TVar v ->
+      if t1 = t2 then Some sub
+      else if occurs v t then None
+      else Some ((v, t) :: sub)
+  | _ -> None
+
+let rec to_arith_type (sub : (ty_var * full_type) list) (t : full_type) : arith_type option =
+  match apply_subst sub t with
+  | TInt -> Some INT
+  | TBool -> Some BOOL
+  | TPair (t1, t2) ->
+      begin match to_arith_type sub t1, to_arith_type sub t2 with
+      | Some a1, Some a2 -> Some (PairT (a1, a2))
       | _ -> None
       end
-    | _ -> None
-    end
-  | App(e1, e2) ->
-    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
-    | Some (FunT(t_param, t_res)), Some t_arg when t_arg = t_param -> Some t_res
-    | _ -> None
-    end
+  | TFun (t1, t2) ->
+      begin match to_arith_type sub t1, to_arith_type sub t2 with
+      | Some a1, Some a2 -> Some (FunT (a1, a2))
+      | _ -> None
+      end
+  | TVar _ -> None
+
+let rec infer (env : (var * full_type) list) (sub : (ty_var * full_type) list) (e : expr)
+    : (full_type * (ty_var * full_type) list) option =
+  match e with
+  | Int _ -> Some (TInt, sub)
+  | Bool _ -> Some (TBool, sub)
+  | Var x ->
+      begin match List.assoc_opt x env with
+      | Some t -> Some (t, sub)
+      | None -> None
+      end
+  | Plus (e1, e2) | Mult (e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          begin match unify sub1 t1 TInt with
+          | None -> None
+          | Some sub2 ->
+              begin match infer env sub2 e2 with
+              | None -> None
+              | Some (t2, sub3) ->
+                  begin match unify sub3 t2 TInt with
+                  | None -> None
+                  | Some sub4 -> Some (TInt, sub4)
+                  end
+              end
+          end
+      end
+  | Equal (e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          begin match unify sub1 t1 TInt with
+          | None -> None
+          | Some sub2 ->
+              begin match infer env sub2 e2 with
+              | None -> None
+              | Some (t2, sub3) ->
+                  begin match unify sub3 t2 TInt with
+                  | None -> None
+                  | Some sub4 -> Some (TBool, sub4)
+                  end
+              end
+          end
+      end
+  | And (e1, e2) | Or (e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          begin match unify sub1 t1 TBool with
+          | None -> None
+          | Some sub2 ->
+              begin match infer env sub2 e2 with
+              | None -> None
+              | Some (t2, sub3) ->
+                  begin match unify sub3 t2 TBool with
+                  | None -> None
+                  | Some sub4 -> Some (TBool, sub4)
+                  end
+              end
+          end
+      end
+  | Not e' ->
+      begin match infer env sub e' with
+      | None -> None
+      | Some (t', sub1) ->
+          begin match unify sub1 t' TBool with
+          | None -> None
+          | Some sub2 -> Some (TBool, sub2)
+          end
+      end
+  | If (e0, e1, e2) ->
+      begin match infer env sub e0 with
+      | None -> None
+      | Some (t0, sub1) ->
+          begin match unify sub1 t0 TBool with
+          | None -> None
+          | Some sub2 ->
+              begin match infer env sub2 e1 with
+              | None -> None
+              | Some (t1, sub3) ->
+                  begin match infer env sub3 e2 with
+                  | None -> None
+                  | Some (t2, sub4) ->
+                      begin match unify sub4 t1 t2 with
+                      | None -> None
+                      | Some sub5 -> Some (apply_subst sub5 t1, sub5)
+                      end
+                  end
+              end
+          end
+      end
+  | Pair (e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          begin match infer env sub1 e2 with
+          | None -> None
+          | Some (t2, sub2) -> Some (TPair (t1, t2), sub2)
+          end
+      end
+  | First e' ->
+      begin match infer env sub e' with
+      | None -> None
+      | Some (t', sub1) ->
+          let a = fresh_var () in
+          let b = fresh_var () in
+          begin match unify sub1 t' (TPair (a, b)) with
+          | None -> None
+          | Some sub2 -> Some (a, sub2)
+          end
+      end
+  | Second e' ->
+      begin match infer env sub e' with
+      | None -> None
+      | Some (t', sub1) ->
+          let a = fresh_var () in
+          let b = fresh_var () in
+          begin match unify sub1 t' (TPair (a, b)) with
+          | None -> None
+          | Some sub2 -> Some (b, sub2)
+          end
+      end
+  | Let (x, e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          let t1' = apply_subst sub1 t1 in
+          infer ((x, t1') :: env) sub1 e2
+      end
+  | Fun (x, body) ->
+      let tx = fresh_var () in
+      begin match infer ((x, tx) :: env) sub body with
+      | None -> None
+      | Some (tbody, sub1) ->
+          let tx' = apply_subst sub1 tx in
+          let tbody' = apply_subst sub1 tbody in
+          Some (TFun (tx', tbody'), sub1)
+      end
+  | Fix (f, x, body) ->
+      let tx = fresh_var () in
+      let tr = fresh_var () in
+      let tf = TFun (tx, tr) in
+      let env' = (f, tf) :: (x, tx) :: env in
+      begin match infer env' sub body with
+      | None -> None
+      | Some (tbody, sub1) ->
+          begin match unify sub1 tbody (apply_subst sub1 tr) with
+          | None -> None
+          | Some sub2 ->
+              let tf' = apply_subst sub2 tf in
+              Some (tf', sub2)
+          end
+      end
+  | App (e1, e2) ->
+      begin match infer env sub e1 with
+      | None -> None
+      | Some (t1, sub1) ->
+          begin match infer env sub1 e2 with
+          | None -> None
+          | Some (t2, sub2) ->
+              let ret = fresh_var () in
+              begin match unify sub2 t1 (TFun (t2, ret)) with
+              | None -> None
+              | Some sub3 -> Some (ret, sub3)
+              end
+          end
+      end
+
+let rec arith_to_full = function
+  | INT -> TInt
+  | BOOL -> TBool
+  | PairT (t1, t2) -> TPair (arith_to_full t1, arith_to_full t2)
+  | FunT (t1, t2) -> TFun (arith_to_full t1, arith_to_full t2)
+
+let type_of_expr ((g, e) : context * expr) : arith_type option =
+  let env = List.map (fun (x, tp) -> (x, arith_to_full tp)) g in
+  match infer env [] e with
+  | None -> None
+  | Some (t, sub) -> to_arith_type sub t
