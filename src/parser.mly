@@ -34,8 +34,6 @@ open Lang
 %nonassoc EQUALS
 %left PLUS
 %left TIMES
-%nonassoc APP_PREC
-%nonassoc NOT FIRST SECOND
 
 %start <Lang.expr> prog
 
