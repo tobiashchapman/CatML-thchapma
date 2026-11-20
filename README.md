@@ -73,13 +73,13 @@ The files in the `src` directory include:
 
 1. the first step is to build the project from the repo root and then launch it using build utop which looks like this:
 
-dune build
-dune utop
+dune build  
+dune utop  
 
 2. Once you are inside utop, open CatML and Main:
 
-open CatML;;
-open Main;;
+open CatML;;  
+open Main;;  
 
 3. You can then parse strings or run .catml files using run_catML_file (here is an example of a factorial function that should print 120):
 
