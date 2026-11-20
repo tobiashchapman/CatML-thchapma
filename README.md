@@ -102,7 +102,7 @@ Due to the absence of explicit type annotations in Fun and Fix within the AST, a
 
 4. Did you implement any of the extra credit features? Briefly summarize your work.
 
-No
+I added type inferencing using unify and infer in src/lang.ml using fresh type vars so that Fun, Fix and App expressions can type check from empty_context without explicit type annotations.
 
 5. Any feedback on the structure of this assignment?
 
