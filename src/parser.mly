@@ -58,7 +58,7 @@ expr:
 
 app_expr:
   | e = prefix_expr { e }
-  | e1 = app_expr; e2 = prefix_expr %prec APP_PREC { App (e1, e2) }
+  | e1 = app_expr; e2 = prefix_expr { App (e1, e2) }
   ;
 
 prefix_expr:
